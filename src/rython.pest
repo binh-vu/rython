@@ -1,0 +1,106 @@
+//
+// Grammar for a Python-similar language
+// Learn more about Pest syntax at: https://pest.rs/book/grammars/syntax.html
+// @author: Binh Vu <binh@toan2.com>
+//
+
+/////////////////////////////////////////////////////////////////////////////////
+// for pest to auto inject whitespace and comment between tokens
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{
+    "/*" ~ (!"*/" ~ ANY)* ~ "*/"
+    | "//" ~ (!"\n" ~ ANY)*
+}
+/////////////////////////////////////////////////////////////////////////////////
+// high-level definitions
+program = _{ SOI ~ stmt* ~ EOI }
+
+// stmts
+// add return stmt because we don't allow define function
+stmt = _{ if_stmt | for_stmt | def_var_stmt | assign_stmt | expr_stmt | return_stmt }
+stmt_w_loop = _{ stmt | break_stmt | continue_stmt }
+stmt_w_return = _{ stmt }
+
+break_stmt = { "break" ~ ";" }
+continue_stmt = { "continue" ~ ";" }
+return_stmt = { "return" ~ expr ~ ";" }
+
+if_stmt = { "if" ~ expr ~ "" ~ "{" ~ stmt* ~ "}" }
+for_stmt = { "for" ~ var ~ ("," ~ var)* ~ "in" ~ expr ~ "{" ~ stmt_w_loop* ~ "}"}
+def_var_stmt = { "let" ~ var ~ ":" ~ var_type ~ "=" ~ expr ~ ";" }
+def_func_stmt = { "def" ~ identifier ~ def_func_params ~ "{" ~ def_func_body ~ "}"}
+def_func_params = {
+    "(" ~ ")"
+    | "(" ~ var ~ ":" ~ var_type ~ ("," ~ var ~ ":" ~ var_type)* ~ ")"
+}
+def_func_body = { stmt_w_return+ }
+expr_stmt = { expr ~ ";"}
+assign_stmt = { var ~ "=" ~ expr ~ ";"}
+
+// expr
+expr = { factor ~ add_expr* }
+add_expr  = { add_ops ~ factor }
+factor   = { primary ~ mul_expr* }
+mul_expr  = { mul_ops ~ primary }
+    add_ops = { "+" | "-" }
+    mul_ops = { "*" | "/" }
+primary  = {
+    "(" ~ expr ~ ")"
+    | number
+    | format_string
+    | string
+    | var
+    | neg_primary
+    | func_call
+}
+neg_primary = { "-" ~ primary }
+
+// function
+func_call = {
+    identifier ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")"
+    | (number | string | var) ~ "." ~ identifier ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")"
+}
+
+/////////////////////////////////////////////////////////////////////////////////
+// compound types
+object = {
+    "{" ~ "}" |
+    "{" ~ pair ~ ("," ~ pair)* ~ "}"
+}
+    pair = { (string | number) ~ ":" ~ expr }
+array = {
+    "[" ~ "]" |
+    "[" ~ expr ~ ("," ~ expr)* ~ "]"
+}
+
+/////////////////////////////////////////////////////////////////////////////////
+// basic building blocks
+var_type = {
+    "int" | "float" | "str" |
+    "List[str]" | "List[int]" | "List[float]" |
+    "Dict[str, int]" | "Dict[str, float]" | "Dict[str, str]" |
+    "Dict[int, int]" | "Dict[int, float]" | "Dict[int, str]"
+}
+var = ${ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_" )* }
+identifier = ${ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_" )* }
+
+boolean = { "true" | "false" }
+null = { "None" }
+string = ${ "\"" ~ inner ~ "\"" }
+    inner = @{ char* }
+    char = {
+        !("\"" | "\\") ~ ANY
+        | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+        | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+    }
+format_string = ${ "f\"" ~ format_inner ~ "\""}
+    inner_expr = !{ "{" ~ expr ~ "}" }
+    format_inner = { (inner_expr|char)* }
+
+number = { neg_op? ~ non_neg_number }
+neg_op = { "-" }
+non_neg_number = @{
+    ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
+    ~ ("." ~ ASCII_DIGIT*)?
+    ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+}

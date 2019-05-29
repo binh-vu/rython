@@ -1,0 +1,11 @@
+[package]
+name = "rython"
+version = "0.1.0"
+authors = ["Binh Vu <binh@toan2.com>"]
+edition = "2018"
+
+[dependencies]
+fnv = "1.0.6"
+pest = "2.1.1"
+pest_derive = "2.1.0"
+clap = "2.33.0"
