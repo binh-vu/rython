@@ -1,20 +1,55 @@
 use std::borrow::Cow;
+use std::cmp::max;
+use std::marker::PhantomData;
 
 use fnv::FnvHashMap;
 use pest::iterators::Pair;
 
+use crate::expr_tree::*;
 use crate::memory::Memory;
-use crate::statements::statement::Statement;
 use crate::types::*;
-use crate::expr::arithmetic::*;
-use crate::expr::expr::Expr;
-use crate::expr::expr_enum::ExprEnum;
-use crate::expr::constant_expr::{ConstantExpr, Constant};
 
-use super::Rule;
-use super::VarDef;
-use std::cmp::max;
-use crate::expr::value_expr::VarExpr;
+use super::compiler::*;
+
+pub fn pair2expr_i64(pair: Pair<Rule>, mem: &mut Memory, name2id: &mut FnvHashMap<String, VarDef>, expected_type: &VarType) -> Result<Box<dyn Eval<i64>>, String> {
+  let ast = ExprASTNode::from_pair(pair, mem, name2id);
+  let ast_type = ast.get_type();
+  if ast_type == *expected_type {
+    Ok(ast.compile_i64())
+  } else {
+    Err(format!("TypeError: The expression is expected to have type: `{:?}`, but get type `{:?}`", expected_type, ast_type))
+  }
+}
+
+pub fn pair2expr_f64(pair: Pair<Rule>, mem: &mut Memory, name2id: &mut FnvHashMap<String, VarDef>, expected_type: &VarType) -> Result<Box<dyn Eval<f64>>, String> {
+  let ast = ExprASTNode::from_pair(pair, mem, name2id);
+  let ast_type = ast.get_type();
+  if ast_type == *expected_type {
+    Ok(ast.compile_f64())
+  } else {
+    Err(format!("TypeError: The expression is expected to have type: `{:?}`, but get type `{:?}`", expected_type, ast_type))
+  }
+}
+
+pub fn pair2expr_str(pair: Pair<Rule>, mem: &mut Memory, name2id: &mut FnvHashMap<String, VarDef>, expected_type: &VarType) -> Result<Box<dyn Eval<Str>>, String> {
+  let ast = ExprASTNode::from_pair(pair, mem, name2id);
+  let ast_type = ast.get_type();
+  if ast_type == *expected_type {
+    Ok(ast.compile_str())
+  } else {
+    Err(format!("TypeError: The expression is expected to have type: `{:?}`, but get type `{:?}`", expected_type, ast_type))
+  }
+}
+
+pub fn pair2expr_bool(pair: Pair<Rule>, mem: &mut Memory, name2id: &mut FnvHashMap<String, VarDef>, expected_type: &VarType) -> Result<Box<dyn Eval<bool>>, String> {
+  let ast = ExprASTNode::from_pair(pair, mem, name2id);
+  let ast_type = ast.get_type();
+  if ast_type == *expected_type {
+    Ok(ast.compile_bool())
+  } else {
+    Err(format!("TypeError: The expression is expected to have type: `{:?}`, but get type `{:?}`", expected_type, ast_type))
+  }
+}
 
 
 /// Represent an AST of an expression.
@@ -42,14 +77,36 @@ use crate::expr::value_expr::VarExpr;
 ///    *
 ///  /  \
 /// 5    2
-pub(super) enum ExprASTNode {
-  NegOps(Box<ExprASTNode>),
-  Ops((Box<ExprASTNode>, String, Box<ExprASTNode>)),
-  Func(Vec<ExprASTNode>),
+#[derive(Debug)]
+pub enum ExprASTNode {
+  UnaryOp(UnaryOpNode),
+  BinaryOp(BinaryOpNode),
+  Func(FuncNode),
   Variable(VarDef),
-  Constant(Constant),
+  Constant(Value),
 }
 
+#[derive(Debug)]
+pub struct UnaryOpNode {
+  node_type: VarType,
+  op: String,
+  lhs: Box<ExprASTNode>,
+}
+
+#[derive(Debug)]
+pub struct BinaryOpNode {
+  node_type: VarType,
+  lhs: Box<ExprASTNode>,
+  op: String,
+  rhs: Box<ExprASTNode>,
+}
+
+#[derive(Debug)]
+pub struct FuncNode {
+  node_type: VarType,
+  func_name: String,
+  args: Vec<(VarType, Box<ExprASTNode>)>,
+}
 
 impl ExprASTNode {
   pub fn from_pair(pair: Pair<Rule>, mem: &mut Memory, name2id: &mut FnvHashMap<String, VarDef>) -> Box<ExprASTNode> {
@@ -57,27 +114,39 @@ impl ExprASTNode {
     match pair.as_rule() {
       Rule::expr => {
         let mut iter = pair.into_inner();
-        let mut ast = ExprASTNode::from_pair(iter.next().unwrap(), mem, name2id);
+        let mut lhs = ExprASTNode::from_pair(iter.next().unwrap(), mem, name2id);
         while let Some(add_pair) = iter.next() {
           let mut children = add_pair.into_inner();
-          let ops = children.next().unwrap().as_str().to_string();
+          let op = children.next().unwrap().as_str().to_string();
+          let rhs = ExprASTNode::from_pair(children.next().unwrap(), mem, name2id);
 
-          ast = Box::new(ExprASTNode::Ops((ast, ops, ExprASTNode::from_pair(children.next().unwrap(), mem, name2id))));
+          lhs = Box::new(ExprASTNode::BinaryOp(BinaryOpNode {
+            node_type: VarType::convert_type(&lhs.get_type(), &rhs.get_type()),
+            lhs,
+            op,
+            rhs,
+          }));
         };
 
-        ast
+        lhs
       }
       Rule::factor => {
         let mut iter = pair.into_inner();
-        let mut ast = ExprASTNode::from_pair(iter.next().unwrap(), mem, name2id);
+        let mut lhs = ExprASTNode::from_pair(iter.next().unwrap(), mem, name2id);
         while let Some(mul_pair) = iter.next() {
           let mut children = mul_pair.into_inner();
-          let ops = children.next().unwrap().as_str().to_string();
+          let op = children.next().unwrap().as_str().to_string();
+          let rhs = ExprASTNode::from_pair(children.next().unwrap(), mem, name2id);
 
-          ast = Box::new(ExprASTNode::Ops((ast, ops, ExprASTNode::from_pair(children.next().unwrap(), mem, name2id))));
+          lhs = Box::new(ExprASTNode::BinaryOp(BinaryOpNode {
+            node_type: VarType::convert_type(&lhs.get_type(), &rhs.get_type()),
+            lhs,
+            op,
+            rhs,
+          }));
         }
 
-        ast
+        lhs
       }
       Rule::primary => {
         let child = pair.into_inner().next().unwrap();
@@ -95,7 +164,12 @@ impl ExprASTNode {
             Box::new(var2node(child, mem, name2id))
           }
           Rule::neg_primary => {
-            Box::new(ExprASTNode::NegOps(ExprASTNode::from_pair(child, mem, name2id)))
+            let lhs = ExprASTNode::from_pair(child.into_inner().next().unwrap(), mem, name2id);
+            Box::new(ExprASTNode::UnaryOp(UnaryOpNode {
+              node_type: lhs.get_type(),
+              op: "-".to_string(),
+              lhs,
+            }))
           }
           Rule::format_string => {
             Box::new(format_string2node(child, mem, name2id))
@@ -106,139 +180,303 @@ impl ExprASTNode {
           _ => unreachable!()
         }
       }
-      _ => unreachable!()
+      _ => unreachable!(pair)
     }
   }
 
-  pub fn get_type(&self) -> Result<VarType, String> {
+  /// Get type of the current node
+  pub fn get_type(&self) -> VarType {
     match self {
       ExprASTNode::Constant(c) => {
         match c {
-          Constant::I64(_) => Ok(VarType::Single(SingleType::I64)),
-          Constant::F64(_) => Ok(VarType::Single(SingleType::F64)),
-          Constant::Str(_) => Ok(VarType::Single(SingleType::Str)),
+          Value::I64(_) => VarType::Single(SingleType::I64),
+          Value::F64(_) => VarType::Single(SingleType::F64),
+          Value::Str(_) => VarType::Single(SingleType::Str),
+          Value::Bool(_) => VarType::Single(SingleType::Bool)
         }
       }
-      ExprASTNode::NegOps(c) => {
-        let ctype = c.get_type()?;
-        if ctype.is_number() {
-          Ok(ctype)
-        } else {
-          Err("Cannot compute negative value from non-number".to_string())
-        }
-      }
-      ExprASTNode::Ops((left, ops, right)) => {
-        let ltype = left.get_type()?;
-        let rtype = right.get_type()?;
-
-        if !ltype.is_number() || !rtype.is_number() {
-          Err("Expect numbers for the expression".to_string())
-        } else {
-          Ok(VarType::convert_type(&ltype, &rtype))
-        }
-      }
-      ExprASTNode::Func(_) => {
-        unimplemented!()
-      }
-      ExprASTNode::Variable(v) => Ok(v.var_type.clone())
+      ExprASTNode::UnaryOp(n) => n.node_type.clone(),
+      ExprASTNode::BinaryOp(n) => n.node_type.clone(),
+      ExprASTNode::Func(n) => n.node_type.clone(),
+      ExprASTNode::Variable(n) => n.var_type.clone()
     }
   }
 
-  /// compile the ast into commands, and return the maximum number of slots needed to evaluate
-  /// these commands
-  ///
-  /// # Arguments
-  ///
-  /// * `registry_no` - the registry slot that is available to write data to
-  pub fn compile<T: Type>(self, registry_no: usize, commands: &mut Vec<ExprEnum<T>>) -> usize {
+  /// compile the ast that is evaluated to an i64 value
+  pub fn compile_bool(self) -> Box<dyn Eval<bool>> {
     match self {
       ExprASTNode::Constant(c) => {
-        // the expression has only one term that return the value
-        commands.push(ExprEnum::Constant(ConstantExpr::new(registry_no, c)));
-        registry_no + 1
-      },
+        Box::new(ConstantExpr {
+          val: c.as_bool()
+        })
+      }
       ExprASTNode::Variable(v) => {
-        commands.push(ExprEnum::Var(VarExpr::new(registry_no, v.id)));
-        registry_no + 1
-      },
-      ExprASTNode::NegOps(c0) => {
-        let c = *c0;
-        // no matter how many command was executed, the result will be stored back at the registry_no slot
-        // so we just need to read the value from there
-        let max_registry = c.compile(registry_no, commands);
-        commands.push(ExprEnum::Neg(NegExpr::new(registry_no)));
-        max_registry
-//        match c {
-//          ExprASTNode::Constant(_) => {
-//            // negative result of a value unit, you should not have this, but this is just in case
-//            c.compile(registry_no, commands);
-//            commands.push(ExprEnum::Neg(NegExpr::new(registry_no))); // re-use the registry
-//            registry_no
-//          },
-//          ExprASTNode::Ops((left, ops, right)) => {
-//            let left_max = left.compile(registry_no, commands);
-//            let right_max = right.compile(registry_no + 1, commands);
-//
-//            match ops.as_str() {
-//              "+" => {
-//                commands.push(ExprEnum::Add(AddExpr::new(registry_no, registry_no + 1)));
-//              },
-//              "-" => {
-//                commands.push(ExprEnum::Sub(SubExpr::new(registry_no, registry_no + 1)));
-//              },
-//              "*" => {
-//                commands.push(ExprEnum::Mul(MulExpr::new(registry_no, registry_no + 1)));
-//              },
-//              "/" => {
-//                commands.push(ExprEnum::Div(DivExpr::new(registry_no, registry_no + 1)));
-//              },
-//              _ => unreachable!()
-//            }
-//
-//            commands.push(ExprEnum::Neg(NegExpr::new(registry_no)));
-//            max(left_max, right_max)
-//          },
-//          ExprASTNode::Variable(_) => {
-//            c.compile(registry_no, commands);
-//            commands.push(ExprEnum::Neg(NegExpr::new(registry_no)));
-//            registry_no
-//          }
-//          _ => unimplemented!()
-//        }
-      },
-      ExprASTNode::Ops((left, ops, right)) => {
-        let left_max = left.compile(registry_no, commands);
-        let right_max = right.compile(registry_no + 1, commands);
-
-        match ops.as_str() {
+        Box::new(VarExpr {
+          var_id: v.id
+        })
+      }
+      ExprASTNode::BinaryOp(binary_op) => {
+        match binary_op.op.as_str() {
           "+" => {
-            commands.push(ExprEnum::Add(AddExpr::new(registry_no, registry_no + 1)));
-          },
+            Box::new(AddExpr::new(binary_op.lhs.compile_bool(), binary_op.rhs.compile_bool()))
+          }
           "-" => {
-            commands.push(ExprEnum::Sub(SubExpr::new(registry_no, registry_no + 1)));
-          },
+            Box::new(SubExpr::new(binary_op.lhs.compile_bool(), binary_op.rhs.compile_bool()))
+          }
           "*" => {
-            commands.push(ExprEnum::Mul(MulExpr::new(registry_no, registry_no + 1)));
-          },
+            Box::new(MulExpr::new(binary_op.lhs.compile_bool(), binary_op.rhs.compile_bool()))
+          }
           "/" => {
-            commands.push(ExprEnum::Div(DivExpr::new(registry_no, registry_no + 1)));
-          },
+            Box::new(DivExpr::new(binary_op.lhs.compile_bool(), binary_op.rhs.compile_bool()))
+          }
+          _ => unimplemented!()
+        }
+      }
+      ExprASTNode::UnaryOp(unary_op) => {
+        match unary_op.op.as_str() {
+          "-" => {
+            panic!("Cannot invoke neg on bool type")
+          }
           _ => unreachable!()
         }
+      }
+      ExprASTNode::Func(func) => {
+        let mut args = vec![];
+        for (arg_type, arg) in func.args.into_iter() {
+          match arg_type {
+            VarType::Single(t) => {
+              match t {
+                SingleType::I64 => {
+                  args.push(WrappedEval::I64(arg.compile_i64()));
+                }
+                SingleType::Str => {
+                  args.push(WrappedEval::Str(arg.compile_str()));
+                }
+                SingleType::F64 => {
+                  args.push(WrappedEval::F64(arg.compile_f64()));
+                }
+                SingleType::Bool => {
+                  args.push(WrappedEval::Bool(arg.compile_bool()));
+                }
+              }
+            }
+            _ => unimplemented!()
+          }
+        }
 
-        max(left_max, right_max)
-      },
-      _ => unimplemented!()
+        Box::new(FuncExpr {
+          name: func.func_name.clone(),
+          args,
+        })
+      }
     }
   }
 
+  pub fn compile_i64(self) -> Box<dyn Eval<i64>> {
+    match self {
+      ExprASTNode::Constant(c) => {
+        Box::new(ConstantExpr {
+          val: c.as_i64()
+        })
+      }
+      ExprASTNode::Variable(v) => {
+        Box::new(VarExpr {
+          var_id: v.id
+        })
+      }
+      ExprASTNode::BinaryOp(binary_op) => {
+        match binary_op.op.as_str() {
+          "+" => {
+            Box::new(AddExpr::new(binary_op.lhs.compile_i64(), binary_op.rhs.compile_i64()))
+          }
+          "-" => {
+            Box::new(SubExpr::new(binary_op.lhs.compile_i64(), binary_op.rhs.compile_i64()))
+          }
+          "*" => {
+            Box::new(MulExpr::new(binary_op.lhs.compile_i64(), binary_op.rhs.compile_i64()))
+          }
+          "/" => {
+            Box::new(DivExpr::new(binary_op.lhs.compile_i64(), binary_op.rhs.compile_i64()))
+          }
+          _ => unimplemented!()
+        }
+      }
+      ExprASTNode::UnaryOp(unary_op) => {
+        match unary_op.op.as_str() {
+          "-" => {
+            Box::new(NegExpr::new(unary_op.lhs.compile_i64()))
+          }
+          _ => unreachable!()
+        }
+      }
+      ExprASTNode::Func(func) => {
+        let mut args = vec![];
+        for (arg_type, arg) in func.args.into_iter() {
+          match arg_type {
+            VarType::Single(t) => {
+              match t {
+                SingleType::I64 => {
+                  args.push(WrappedEval::I64(arg.compile_i64()));
+                }
+                SingleType::Str => {
+                  args.push(WrappedEval::Str(arg.compile_str()));
+                }
+                SingleType::F64 => {
+                  args.push(WrappedEval::F64(arg.compile_f64()));
+                }
+                SingleType::Bool => {
+                  args.push(WrappedEval::Bool(arg.compile_bool()));
+                }
+              }
+            }
+            _ => unimplemented!()
+          }
+        }
+
+        Box::new(FuncExpr {
+          name: func.func_name.clone(),
+          args,
+        })
+      }
+    }
+  }
+
+  pub fn compile_f64(self) -> Box<dyn Eval<f64>> {
+    match self {
+      ExprASTNode::Constant(c) => {
+        Box::new(ConstantExpr {
+          val: c.as_f64()
+        })
+      }
+      ExprASTNode::Variable(v) => {
+        Box::new(VarExpr {
+          var_id: v.id
+        })
+      }
+      ExprASTNode::BinaryOp(binary_op) => {
+        match binary_op.op.as_str() {
+          "+" => {
+            Box::new(AddExpr::new(binary_op.lhs.compile_f64(), binary_op.rhs.compile_f64()))
+          }
+          "-" => {
+            Box::new(SubExpr::new(binary_op.lhs.compile_f64(), binary_op.rhs.compile_f64()))
+          }
+          "*" => {
+            Box::new(MulExpr::new(binary_op.lhs.compile_f64(), binary_op.rhs.compile_f64()))
+          }
+          "/" => {
+            Box::new(DivExpr::new(binary_op.lhs.compile_f64(), binary_op.rhs.compile_f64()))
+          }
+          _ => unimplemented!()
+        }
+      }
+      ExprASTNode::UnaryOp(unary_op) => {
+        match unary_op.op.as_str() {
+          "-" => {
+            Box::new(NegExpr::new(unary_op.lhs.compile_f64()))
+          }
+          _ => unreachable!()
+        }
+      }
+      ExprASTNode::Func(func) => {
+        let mut args = vec![];
+        for (arg_type, arg) in func.args.into_iter() {
+          match arg_type {
+            VarType::Single(t) => {
+              match t {
+                SingleType::I64 => {
+                  args.push(WrappedEval::I64(arg.compile_i64()));
+                }
+                SingleType::Str => {
+                  args.push(WrappedEval::Str(arg.compile_str()));
+                }
+                SingleType::F64 => {
+                  args.push(WrappedEval::F64(arg.compile_f64()));
+                }
+                SingleType::Bool => {
+                  args.push(WrappedEval::Bool(arg.compile_bool()));
+                }
+              }
+            }
+            _ => unimplemented!()
+          }
+        }
+
+        Box::new(FuncExpr {
+          name: func.func_name.clone(),
+          args,
+        })
+      }
+    }
+  }
+
+  pub fn compile_str(self) -> Box<dyn Eval<Str>> {
+    match self {
+      ExprASTNode::Constant(c) => {
+        Box::new(ConstantExpr {
+          val: c.as_str()
+        })
+      }
+      ExprASTNode::Variable(v) => {
+        Box::new(VarExpr {
+          var_id: v.id
+        })
+      }
+      ExprASTNode::BinaryOp(binary_op) => {
+        match binary_op.op.as_str() {
+          "+" => {
+            Box::new(AddExpr::new(binary_op.lhs.compile_str(), binary_op.rhs.compile_str()))
+          }
+          _ => panic!("TypeError: cannot perform `{}` operator on a string type", binary_op.op)
+        }
+      }
+      ExprASTNode::UnaryOp(unary_op) => {
+        match unary_op.op.as_str() {
+          "-" => {
+            panic!("TypeError: cannot perform `-` operator on a string type")
+          }
+          _ => unreachable!()
+        }
+      }
+      ExprASTNode::Func(func) => {
+        let mut args = vec![];
+        for (arg_type, arg) in func.args.into_iter() {
+          match arg_type {
+            VarType::Single(t) => {
+              match t {
+                SingleType::I64 => {
+                  args.push(WrappedEval::I64(arg.compile_i64()));
+                }
+                SingleType::Str => {
+                  args.push(WrappedEval::Str(arg.compile_str()));
+                }
+                SingleType::F64 => {
+                  args.push(WrappedEval::F64(arg.compile_f64()));
+                }
+                SingleType::Bool => {
+                  args.push(WrappedEval::Bool(arg.compile_bool()));
+                }
+              }
+            }
+            _ => unimplemented!()
+          }
+        }
+
+        Box::new(FuncExpr {
+          name: func.func_name.clone(),
+          args,
+        })
+      }
+    }
+  }
 }
+
 #[inline]
 fn number2node(pair: Pair<Rule>) -> ExprASTNode {
   let val = pair.as_span().as_str();
   let constant = match val.find(".") {
-    None => Constant::I64(val.parse::<i64>().unwrap()),
-    Some(_) => Constant::F64(val.parse::<f64>().unwrap())
+    None => Value::I64(val.parse::<i64>().unwrap()),
+    Some(_) => Value::F64(val.parse::<f64>().unwrap())
   };
 
   ExprASTNode::Constant(constant)
@@ -247,7 +485,7 @@ fn number2node(pair: Pair<Rule>) -> ExprASTNode {
 #[inline]
 fn string2node(pair: Pair<Rule>, mem: &mut Memory, name2id: &mut FnvHashMap<String, VarDef>) -> ExprASTNode {
   let val = pair.as_str();
-  ExprASTNode::Constant(Constant::Str(Cow::Owned(val.to_string())))
+  ExprASTNode::Constant(Value::Str(Cow::Owned(val.to_string())))
 }
 
 #[inline]

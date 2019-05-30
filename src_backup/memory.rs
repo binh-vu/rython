@@ -4,8 +4,6 @@ use crate::types::*;
 
 #[derive(Default, Debug, Clone)]
 pub struct Memory {
-  pub pc: usize,
-  pub bool_vars: Vec<bool>,
   pub str_vars: Vec<Str>,
   pub i64_vars: Vec<i64>,
   pub f64_vars: Vec<f64>,
@@ -21,8 +19,6 @@ pub struct Memory {
   pub dict_int_str_vars: Vec<FnvHashMap<i64, Str>>,
   pub dict_int_i64_vars: Vec<FnvHashMap<i64, i64>>,
   pub dict_int_f64_vars: Vec<FnvHashMap<i64, f64>>,
-
-//  pub iter_i64_vars: Vec<Iterator<Item=i64>>,
 }
 
 impl Memory {
@@ -41,10 +37,6 @@ impl Memory {
           SingleType::F64 => {
             self.f64_vars.push(0.0);
             self.f64_vars.len() - 1
-          }
-          SingleType::Bool => {
-            self.bool_vars.push(false);
-            self.bool_vars.len() - 1
           }
         }
       },
@@ -81,19 +73,4 @@ impl Memory {
   pub fn set_f64(&mut self, var_id: usize, val: f64) {
     self.f64_vars[var_id] = val;
   }
-
-  #[inline]
-  pub fn get_bool(&self, var_id: usize) -> bool {
-    return self.bool_vars[var_id];
-  }
-
-  #[inline]
-  pub fn set_bool(&mut self, var_id: usize, val: bool) {
-    self.bool_vars[var_id] = val;
-  }
-
-//  #[inline]
-//  pub fn get_i64_iter_mut(&mut self, var_id: usize) -> &dyn Iterator<Item=i64> {
-//    return &self.iter_i64_vars[var_id];
-//  }
 }

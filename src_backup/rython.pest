@@ -17,7 +17,7 @@ program = _{ SOI ~ stmt* ~ EOI }
 
 // stmts
 // add return stmt because we don't allow define function
-stmt = _{ if_stmt | for_stmt | def_var_stmt | assign_stmt | return_stmt }
+stmt = _{ if_stmt | for_stmt | def_var_stmt | assign_stmt | expr_stmt | return_stmt }
 stmt_w_loop = _{ stmt | break_stmt | continue_stmt }
 stmt_w_return = _{ stmt }
 
@@ -25,8 +25,7 @@ break_stmt = { "break" ~ ";" }
 continue_stmt = { "continue" ~ ";" }
 return_stmt = { "return" ~ expr ~ ";" }
 
-if_stmt = { "if" ~ expr ~ "" ~ if_branch ~ "else" ~ if_branch }
-    if_branch = { "{" ~ stmt* ~ "}" }
+if_stmt = { "if" ~ expr ~ "" ~ "{" ~ stmt* ~ "}" }
 for_stmt = { "for" ~ var ~ ("," ~ var)* ~ "in" ~ expr ~ "{" ~ stmt_w_loop* ~ "}"}
 def_var_stmt = { "let" ~ var ~ ":" ~ var_type ~ "=" ~ expr ~ ";" }
 def_func_stmt = { "def" ~ identifier ~ def_func_params ~ "{" ~ def_func_body ~ "}"}
